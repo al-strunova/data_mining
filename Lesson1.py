@@ -29,9 +29,8 @@ class Parse5ka:
             time.sleep(1)
 
     def run(self):
-        response = self._get_response(self.base_url + "/categories/")
-        data: dict = response.json()
-        for category in data:
+        categories = self._get_categories()
+        for category in categories:
             category_obj = Category(
                 category["parent_group_name"],
                 category["parent_group_code"],
@@ -41,14 +40,20 @@ class Parse5ka:
             category_path = self.save_path.joinpath(f"{category_obj.code}.json")
             self._save(category_obj, category_path)
 
-    def _save(self, data, file_path):
-        file_path.write_text(json.dumps(str(data), ensure_ascii=False))
+    def _get_categories(self):
+        return self._get("/categories/")
 
     def _get_products(self, code):
-        response = self._get_response(self.base_url + f"/special_offers/?categories={code}")
+        products = self._get(f"/special_offers/?categories={code}")
+        return products["results"]
+
+    def _get(self, relative_url):
+        response = self._get_response(f"{self.base_url}{relative_url}")
         data: dict = response.json()
-        products = data["results"]
-        return products
+        return data
+
+    def _save(self, data, file_path):
+        file_path.write_text(json.dumps(str(data), ensure_ascii=False))
 
 
 def get_save_path(dir_name):
