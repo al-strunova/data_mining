@@ -1,3 +1,5 @@
+import datetime
+
 import requests
 import typing
 import bs4
@@ -52,6 +54,13 @@ class GBlogParse:
             "post_data": {
                 "url": url,
                 "title": soup.find("h1", attrs={"class": "blogpost-title"}).text,
+                "img_url": soup.find("article").find("img").attrs.get("src"),
+                "published_date": datetime.datetime.strptime(
+                    soup.find("time", attrs={"itemprop": "datePublished"})
+                    .attrs.get("datetime")
+                    .replace("T", " ")[:-6],
+                    "%Y-%m-%d %H:%M:%S",
+                ),
             },
             "author_data": {
                 "url": urljoin(
