@@ -1,75 +1,48 @@
 import scrapy
-import pymongo
-import re
+
+from gb_parse.loaders import AutoyoulaLoader
 
 
 class AutoyoulaSpider(scrapy.Spider):
     name = "autoyoula"
     allowed_domains = ["auto.youla.ru"]
     start_urls = ["https://auto.youla.ru/"]
-    _css_selectors = {
-        "brands": ".TransportMainFilters_brandsList__2tIkv "
-        "div.ColumnItemList_container__5gTrc a.blackLink",
-        "pagination": "a.Paginator_button__u1e7D",
-        "car": ".SerpSnippet_titleWrapper__38bZM a.SerpSnippet_name__3F7Yu",
+
+    _xpath_selectors = {
+        "brands": "//a[@data-target='brand']/@href",
+        "pagination": "//div[contains(@class, 'Paginator_block')]"
+        "/a[@data-target-id='button-link-serp-paginator']/@href",
+        "car": "//article[@data-target='serp-snippet']//a[@data-target='serp-snippet-title']/@href",
     }
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.db_client = pymongo.MongoClient()
+    _xpath_data_query = {
+        "title": "//div[@data-target='advert-title']/text()",
+        "price": "//div[@data-target='advert-price']/text()",
+        "photos": "//div[contains(@class, 'PhotoGallery_block')]//figure/picture/img/@src",
+        "characteristics": "//div[contains(@class, 'AdvertCard_specs')]"
+        "/div/div[contains(@class, 'AdvertSpecs_row')]",
+        "description": "//div[@data-target='advert-info-descriptionFull']/text()",
+        "author": '//body/script[contains(text(), "window.transitState = decodeURIComponent")]',
+    }
 
-    def get_author_id(self, resp):
-        marker = "window.transitState = decodeURIComponent"
-        for script in resp.css("script"):
-            try:
-                if marker in script.css("::text").extract_first():
-                    re_pattern = re.compile(r"youlaId%22%2C%22([a-zA-Z|\d]+)%22%2C%22avatar")
-                    result = re.findall(re_pattern, script.css("::text").extract_first())
-                    return (
-                        resp.urljoin(f"/user/{result[0]}").replace("auto.", "", 1)
-                        if result
-                        else None
-                    )
-            except TypeError:
-                pass
-
-    def _get_follow(self, response, select_css, callback, **kwargs):
-        for link_selector in response.css(select_css):
-            yield response.follow(
-                link_selector.attrib.get("href"), callback=callback, cb_kwargs=kwargs
-            )
+    def _get_follow_xpath(self, response, selector, callback, **kwargs):
+        for link in response.xpath(selector):
+            yield response.follow(link, callback=callback, cb_kwargs=kwargs)
 
     def parse(self, response, *args, **kwargs):
-        yield from self._get_follow(
-            response, self._css_selectors["brands"], self.brand_parse, hello="moto"
+        yield from self._get_follow_xpath(
+            response, self._xpath_selectors["brands"], self.brand_parse
         )
 
     def brand_parse(self, response, **kwargs):
-        yield from self._get_follow(response, self._css_selectors["pagination"], self.brand_parse)
-        yield from self._get_follow(response, self._css_selectors["car"], self.car_parse)
+        yield from self._get_follow_xpath(
+            response, self._xpath_selectors["pagination"], self.brand_parse
+        )
+        yield from self._get_follow_xpath(response, self._xpath_selectors["car"], self.car_parse)
 
     def car_parse(self, response):
-        data = {
-            "title": response.css("div.AdvertCard_advertTitle__1S1Ak::text").get(),
-            "price": float(
-                response.css("div.AdvertCard_price__3dDCr::text").get().replace("\u2009", "")
-            ),
-            "photos": [
-                itm.attrib.get("src")
-                for itm in response.css("figure.PhotoGallery_photo__36e_r img")
-            ],
-            "characteristics": [
-                {
-                    "name": itm.css(".AdvertSpecs_label__2JHnS::text").extract_first(),
-                    "value": itm.css(".AdvertSpecs_data__xK2Qx::text").extract_first()
-                    or itm.css(".AdvertSpecs_data__xK2Qx a::text").extract_first(),
-                }
-                for itm in response.css("div.AdvertCard_specs__2FEHc .AdvertSpecs_row__ljPcX")
-            ],
-            "descriptions": response.css(
-                ".AdvertCard_descriptionInner__KnuRi::text"
-            ).extract_first(),
-            "author": self.get_author_id(response),
-        }
-
-        self.db_client["gb_parse_15_02_2021"][self.name].insert_one(data)
+        loader = AutoyoulaLoader(response=response)
+        loader.add_value("url", response.url)
+        for key, selector in self._xpath_data_query.items():
+            loader.add_xpath(key, selector)
+        yield loader.load_item()
